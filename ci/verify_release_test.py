@@ -18,6 +18,7 @@ class ReleaseBundleTest(unittest.TestCase):
             self.write(path, CFBundleIdentifier=identifier, CFBundleShortVersionString='0.1.0',
                        CFBundleVersion='4', CFBundleSupportedPlatforms=['AppleTVOS'],
                        ZooTVServerURL='https://tv.example.test',
+                       TVTopShelfImage={'TVTopShelfPrimaryImageWide': 'TopShelfWide'},
                        ITSAppUsesNonExemptEncryption=False)
 
     def write(self, path, **changes):
@@ -65,4 +66,9 @@ class ReleaseBundleTest(unittest.TestCase):
     def test_rejects_different_extension_server(self):
         self.write(self.shelf, ZooTVServerURL='https://other.example.test')
         with self.assertRaisesRegex(ValueError, 'different TV server'):
+            verify(self.app, '0.1.0', '4')
+
+    def test_rejects_missing_wide_top_shelf_image(self):
+        self.write(self.app, TVTopShelfImage={})
+        with self.assertRaisesRegex(ValueError, 'wide Top Shelf'):
             verify(self.app, '0.1.0', '4')

@@ -32,8 +32,11 @@ def verify(app, version, build):
     if len(servers) != 1:
         raise ValueError('App and Top Shelf use different TV server configurations')
     with (app / 'Info.plist').open('rb') as source:
-        if plistlib.load(source).get('ITSAppUsesNonExemptEncryption') is not False:
+        info = plistlib.load(source)
+        if info.get('ITSAppUsesNonExemptEncryption') is not False:
             raise ValueError('Missing encryption compliance declaration')
+        if not info.get('TVTopShelfImage', {}).get('TVTopShelfPrimaryImageWide'):
+            raise ValueError('Missing required wide Top Shelf image')
 
 
 if __name__ == '__main__':

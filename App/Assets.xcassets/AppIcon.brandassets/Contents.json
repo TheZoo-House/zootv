@@ -11,6 +11,12 @@
       "size": "1280x768",
       "role": "primary-app-icon",
       "filename": "App Store Icon.imagestack"
+    },
+    {
+      "idiom": "tv",
+      "size": "2320x720",
+      "role": "top-shelf-image-wide",
+      "filename": "Top Shelf Wide.imageset"
     }
   ],
   "info": {
