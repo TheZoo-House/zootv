@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Core tests and tvOS build
+    runs-on: xcode-27
+    timeout-minutes: 30
+    concurrency:
+      group: zootv-checks-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-xcode
+      - name: Test Core
+        run: swift test
+      - name: Compile for tvOS Simulator
+        run: |
+          set -euo pipefail
+          xcodebuild -project ZooTV.xcodeproj -scheme ZooTV \
+            -destination 'generic/platform=tvOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/ZooTVCheck" \
+            CODE_SIGNING_ALLOWED=NO build

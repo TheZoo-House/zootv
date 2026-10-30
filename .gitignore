@@ -1,0 +1,11 @@
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+Artifacts/
+__pycache__/
+Config/Private.xcconfig
+ZooTV.xcodeproj/
+App/Info.plist
+TopShelf/Info.plist

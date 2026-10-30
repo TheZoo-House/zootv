@@ -1,0 +1,16 @@
+name: Set up Xcode
+description: Select the same Xcode for checks and distribution.
+runs:
+  using: composite
+  steps:
+    - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+      with:
+        xcode-version: "27.1"
+    - shell: bash
+      run: |
+        set -euo pipefail
+        actual=$(xcodebuild -version)
+        [[ "${actual%%$'\n'*}" == 'Xcode 27.1' ]]
+        xcodebuild -version
+        brew list --versions xcodegen >/dev/null || brew install xcodegen
+        xcodegen generate
