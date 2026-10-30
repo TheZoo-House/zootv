@@ -1,0 +1,164 @@
+name: TestFlight build
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Archive and publish tvOS
+    runs-on: xcode-27
+    environment: testflight
+    timeout-minutes: 60
+    concurrency:
+      group: zootv-testflight-publication
+      cancel-in-progress: false
+    env:
+      TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
+      ZOOTV_SERVER_URL: ${{ secrets.ZOOTV_SERVER_URL }}
+      BUNDLE_ID: house.thezoo.ZooTV
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - name: Check required secrets
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
+          IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          APPLE_DEVELOPMENT_TEAM_ID: ${{ secrets.APPLE_DEVELOPMENT_TEAM_ID }}
+          ZOOTV_SERVER_URL: ${{ secrets.ZOOTV_SERVER_URL }}
+        run: |
+          set -euo pipefail
+          for name in APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID \
+            APP_STORE_CONNECT_PRIVATE_KEY IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 \
+            IOS_DISTRIBUTION_CERTIFICATE_PASSWORD APPLE_DEVELOPMENT_TEAM_ID ZOOTV_SERVER_URL; do
+            [[ -n "${!name}" ]] || { echo "::error::Missing secret: ${name}"; exit 1; }
+          done
+      - uses: ./.github/actions/setup-xcode
+      - name: Prepare release paths and version
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d "$RUNNER_TEMP/zootv-release.XXXXXX")
+          echo "RELEASE_DIRECTORY=$work" >> "$GITHUB_ENV"
+          version=$(xcodebuild -project ZooTV.xcodeproj -scheme ZooTV -configuration Release \
+            -showBuildSettings -json | jq -er '.[] | select(.target == "ZooTV") | .buildSettings.MARKETING_VERSION')
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          echo "MARKETING_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Write App Store Connect key
+        env:
+          PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          key_path="$RELEASE_DIRECTORY/AuthKey.p8"
+          (umask 077; printf '%s' "$PRIVATE_KEY" | perl -pe 's/\\n/\n/g' > "$key_path")
+          echo "APP_STORE_CONNECT_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+      - name: Select next TestFlight build number
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          number=$(ruby ci/select_testflight_build_number.rb)
+          echo "BUILD_NUMBER=$number" >> "$GITHUB_ENV"
+      - name: Import distribution certificate into a temporary keychain
+        uses: apple-actions/import-codesign-certs@288b8ec97b82c66b6f2a6baaf7acc8dfbcbe331c # v7
+        with:
+          p12-file-base64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+      - name: Download app profile
+        id: app-profile
+        uses: apple-actions/download-provisioning-profiles@233aa54e59082c0e8a8cf8b0b02c72dea2422ef9 # v7
+        with:
+          bundle-id: house.thezoo.ZooTV
+          profile-type: TVOS_APP_STORE
+          issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+      - name: Download Top Shelf profile
+        id: shelf-profile
+        uses: apple-actions/download-provisioning-profiles@233aa54e59082c0e8a8cf8b0b02c72dea2422ef9 # v7
+        with:
+          bundle-id: house.thezoo.ZooTV.TopShelf
+          profile-type: TVOS_APP_STORE
+          issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+      - name: Archive and export
+        env:
+          APP_PROFILES: ${{ steps.app-profile.outputs.profiles }}
+          SHELF_PROFILES: ${{ steps.shelf-profile.outputs.profiles }}
+        run: |
+          set -euo pipefail
+          export ZOOTV_APP_PROVISIONING_PROFILE_SPECIFIER ZOOTV_SHELF_PROVISIONING_PROFILE_SPECIFIER
+          ZOOTV_APP_PROVISIONING_PROFILE_SPECIFIER=$(jq -er '[.[] | select(.type == "TVOS_APP_STORE")] | first | .name | select(length > 0)' <<< "$APP_PROFILES")
+          ZOOTV_SHELF_PROVISIONING_PROFILE_SPECIFIER=$(jq -er '[.[] | select(.type == "TVOS_APP_STORE")] | first | .name | select(length > 0)' <<< "$SHELF_PROFILES")
+          xcodebuild archive -project ZooTV.xcodeproj -scheme ZooTV -configuration Release \
+            -destination 'generic/platform=tvOS' \
+            -archivePath "$RELEASE_DIRECTORY/ZooTV.xcarchive" \
+            -derivedDataPath "$RELEASE_DIRECTORY/DerivedData" \
+            DEVELOPMENT_TEAM="$TEAM_ID" ZOOTV_SERVER_URL="$ZOOTV_SERVER_URL" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY='Apple Distribution' \
+            ZOOTV_APP_PROVISIONING_PROFILE_SPECIFIER="$ZOOTV_APP_PROVISIONING_PROFILE_SPECIFIER" \
+            ZOOTV_SHELF_PROVISIONING_PROFILE_SPECIFIER="$ZOOTV_SHELF_PROVISIONING_PROFILE_SPECIFIER" \
+            MARKETING_VERSION="$MARKETING_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+          python3 ci/verify_release.py "$RELEASE_DIRECTORY/ZooTV.xcarchive/Products/Applications/ZooTV.app" "$MARKETING_VERSION" "$BUILD_NUMBER"
+          python3 - <<'PY'
+          import os, plistlib
+          env = os.environ
+          options = dict(method='app-store-connect', destination='export', signingStyle='manual',
+                         signingCertificate='Apple Distribution', teamID=env['TEAM_ID'],
+                         manageAppVersionAndBuildNumber=False, uploadSymbols=True,
+                         provisioningProfiles={
+                             'house.thezoo.ZooTV': env['ZOOTV_APP_PROVISIONING_PROFILE_SPECIFIER'],
+                             'house.thezoo.ZooTV.TopShelf': env['ZOOTV_SHELF_PROVISIONING_PROFILE_SPECIFIER']})
+          with open(env['RELEASE_DIRECTORY'] + '/ExportOptions.plist', 'wb') as out:
+              plistlib.dump(options, out)
+          PY
+          xcodebuild -exportArchive -archivePath "$RELEASE_DIRECTORY/ZooTV.xcarchive" \
+            -exportPath "$RELEASE_DIRECTORY/export" \
+            -exportOptionsPlist "$RELEASE_DIRECTORY/ExportOptions.plist"
+          ipa="$RELEASE_DIRECTORY/export/ZooTV.ipa"
+          test -s "$ipa"
+          unzip -q "$ipa" -d "$RELEASE_DIRECTORY/ipa"
+          python3 ci/verify_release.py "$RELEASE_DIRECTORY/ipa/Payload/ZooTV.app" "$MARKETING_VERSION" "$BUILD_NUMBER"
+          codesign --verify --deep --strict "$RELEASE_DIRECTORY/ipa/Payload/ZooTV.app"
+      - name: Retain IPA and dSYMs
+        if: github.event.repository.private
+        uses: actions/upload-artifact@v7
+        with:
+          name: zootv-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.RELEASE_DIRECTORY }}/export/*.ipa
+            ${{ env.RELEASE_DIRECTORY }}/ZooTV.xcarchive/dSYMs
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload and wait for Apple processing
+        uses: apple-actions/upload-testflight-build@b5270248e0ee7f200475125bddf7c0e5616386b5 # v4
+        with:
+          app-path: ${{ env.RELEASE_DIRECTORY }}/export/ZooTV.ipa
+          app-type: appletvos
+          backend: app-store-api
+          issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          api-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          wait-for-processing: "true"
+      - name: Record release
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          ruby ci/verify_testflight.rb >> "$GITHUB_STEP_SUMMARY"
+          printf 'ZooTV %s (%s)\n\nCommit: %s\n\nApple processing completed successfully.\n' \
+            "$MARKETING_VERSION" "$BUILD_NUMBER" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary release files and API keys
+        if: always()
+        run: |
+          if [[ -n "${RELEASE_DIRECTORY:-}" ]]; then rm -rf "$RELEASE_DIRECTORY"; fi
+          # Apple's upload action only removes these on success. This VM is job-owned.
+          rm -f "$HOME"/private_keys/AuthKey_*.p8

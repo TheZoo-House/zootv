@@ -68,6 +68,12 @@ For a read-only live feed check on your own network:
 ZOOTV_SERVER_URL=https://tv.example.com swift run zootv-check
 ```
 
+## TestFlight
+
+Pull requests and main pushes run Core tests and compile for tvOS Simulator.
+Automatic TestFlight publication is off until explicitly activated. See
+[TestFlight setup](docs/testflight.md) for signing inputs and activation.
+
 ## Source layout
 
 - `Core/`: models, feed client, parsers, playback state and configuration.

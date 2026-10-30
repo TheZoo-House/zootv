@@ -19,6 +19,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-xcode
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - name: Check release helpers
+        run: |
+          gem install minitest --version 5.25.5 --no-document
+          ruby ci/select_testflight_build_number_test.rb
+          ruby ci/verify_testflight_test.rb
+          python3 -m unittest discover -s ci -p '*_test.py'
       - name: Test Core
         run: swift test
       - name: Compile for tvOS Simulator
@@ -28,3 +37,9 @@ jobs:
             -destination 'generic/platform=tvOS Simulator' \
             -derivedDataPath "$RUNNER_TEMP/ZooTVCheck" \
             CODE_SIGNING_ALLOWED=NO build
+
+  testflight:
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.TESTFLIGHT_ENABLED == 'true'
+    uses: ./.github/workflows/testflight.yml
+    secrets: inherit
