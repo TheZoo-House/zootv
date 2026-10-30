@@ -142,7 +142,7 @@ jobs:
         with:
           app-path: ${{ env.RELEASE_DIRECTORY }}/export/ZooTV.ipa
           app-type: appletvos
-          backend: app-store-api
+          backend: appstoreApi
           issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           api-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           api-private-key: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
