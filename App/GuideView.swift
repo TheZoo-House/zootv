@@ -18,6 +18,7 @@ struct Backdrop: View {
 
 struct GuideView: View {
     @State private var store = GuideStore()
+    @State private var favorites = FavoritesStore()
     @State private var scroll = GridScroll()
     @State private var pendingChannel: Channel?
     /// Channel a `zootv://play` link asked for; honoured once the guide knows it.
@@ -32,21 +33,22 @@ struct GuideView: View {
     private let window: TimeInterval = 2 * 60 * 60
 
     var body: some View {
+        let channels = store.guide.map { guide in
+            guide.orderedChannels(favorites: Set(guide.channels.filter { favorites.isFavorite($0.id) }.map(\.id)))
+        } ?? []
         ZStack {
             if let playback {
-                PlaybackView(model: playback, channels: store.guide?.channels ?? [], guide: store.guide,
+                PlaybackView(model: playback, channels: channels, guide: store.guide,
                              guideShown: guideOverShow, showGuide: openGuide, close: closePlayback)
             }
             if playback == nil || guideOverShow {
-                grid.onExitCommand(perform: playback == nil ? nil : { guideOverShow = false })
+                grid(channels: channels).onExitCommand(perform: playback == nil ? nil : { guideOverShow = false })
             }
         }
         .task {
             while !Task.isCancelled {
                 if scenePhase == .active {
-                    let firstLoad = store.guide == nil
                     await store.refresh()
-                    if firstLoad { focusedChannel = store.guide?.channels.first?.id }
                 }
                 do { try await Task.sleep(for: .seconds(60)) } catch { break }
             }
@@ -55,7 +57,10 @@ struct GuideView: View {
             if phase == .active { Task { await store.refresh() } }
         }
         .onOpenURL { url in linkedChannel = DeepLink.channelID(from: url); followLink() }
-        .onChange(of: store.guide?.channels) { _, _ in followLink() }
+        .onChange(of: store.guide?.channels) { _, _ in
+            if focusedChannel == nil { focusedChannel = channels.first?.id }
+            followLink()
+        }
         .sheet(item: $store.detail, onDismiss: {
             if let channel = pendingChannel { pendingChannel = nil; watch(channel) }
         }) { programme in
@@ -79,12 +84,12 @@ struct GuideView: View {
         }
     }
 
-    private var grid: some View {
+    private func grid(channels: [Channel]) -> some View {
         TimelineView(.periodic(from: .now, by: 10)) { context in
             VStack(alignment: .leading, spacing: 30) {
                 header(context.date)
                 if let guide = store.guide {
-                    guideBody(guide, now: context.date)
+                    guideBody(guide, channels: channels, now: context.date)
                 } else if let error = store.error {
                     Spacer()
                     ContentUnavailableView {
@@ -143,8 +148,9 @@ struct GuideView: View {
                 Text("ZooTV").font(.system(size: 46, weight: .black))
             }.foregroundStyle(LinearGradient(colors: [amber, coral], startPoint: .leading, endPoint: .trailing))
             Spacer()
-            if store.guide != nil, let error = store.error {
-                Label("Showing the last loaded guide. \(error)", systemImage: "exclamationmark.triangle.fill")
+            if let warning = store.error.map({ "Showing the last loaded guide. \($0)" }) ?? favorites.syncError,
+               store.guide != nil {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(amber).lineLimit(1).padding(.horizontal, 40)
                 Spacer()
             }
@@ -155,7 +161,7 @@ struct GuideView: View {
         }
     }
 
-    private func guideBody(_ guide: Guide, now: Date) -> some View {
+    private func guideBody(_ guide: Guide, channels: [Channel], now: Date) -> some View {
         // x = 0 is "now", so rows slide left as time passes, like a DVR guide; the rest scrolls horizontally.
         let lastEnd = guide.programmes.map(\.end).max() ?? now
         let firstTick = ceil(now.timeIntervalSince1970 / 1800) * 1800
@@ -175,11 +181,15 @@ struct GuideView: View {
                     ScrollView(.vertical) {
                         HStack(alignment: .top, spacing: 0) {
                             VStack(spacing: 14) {
-                                ForEach(guide.channels) { channel in
+                                ForEach(channels) { channel in
                                     Button { watch(channel) } label: {
                                         VStack(alignment: .leading, spacing: 6) {
-                                            Text(channel.number).font(.system(size: 30, weight: .heavy).monospacedDigit())
-                                                .foregroundStyle(.tint)
+                                            HStack(spacing: 10) {
+                                                Text(channel.number).font(.system(size: 30, weight: .heavy).monospacedDigit())
+                                                if favorites.isFavorite(channel.id) {
+                                                    Image(systemName: "star.fill").font(.system(size: 22)).accessibilityHidden(true)
+                                                }
+                                            }.foregroundStyle(.tint)
                                             Text(channel.name).font(.system(size: 24, weight: .semibold)).lineLimit(2)
                                         }
                                         .padding(.horizontal, 24)
@@ -188,13 +198,20 @@ struct GuideView: View {
                                     .buttonStyle(TileStyle(fill: .white.opacity(0.09)) { selection.focus(channel: channel.id) })
                                     .focused($focusedChannel, equals: channel.id)
                                     .accessibilityIdentifier("channel-\(channel.number)")
-                                    .accessibilityLabel("\(channel.number), \(channel.name), Watch live")
+                                    .accessibilityLabel("\(channel.number), \(channel.name), \(favorites.isFavorite(channel.id) ? "Favorite, " : "")Watch live")
+                                    .contextMenu {
+                                        Button(favorites.isFavorite(channel.id) ? "Remove from Favorites" : "Add to Favorites",
+                                               systemImage: favorites.isFavorite(channel.id) ? "star.slash" : "star") {
+                                            favorites.toggle(channel.id)
+                                            focusedChannel = channel.id
+                                        }
+                                    }
                                 }
                             }
                             // One horizontal scroller for every row keeps them in step, like a real guide.
                             ScrollView(.horizontal) {
                                 VStack(alignment: .leading, spacing: 14) {
-                                    ForEach(guide.channels) { channel in
+                                    ForEach(channels) { channel in
                                         GuideRow(channel: channel, schedule: guide.visible(on: channel, from: now, to: lastEnd), now: now,
                                                  perSecond: perSecond, height: rowHeight, viewport: viewport - inset * 2,
                                                  selection: selection, scroll: scroll) { programme in

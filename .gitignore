@@ -9,3 +9,4 @@ Config/Private.xcconfig
 ZooTV.xcodeproj/
 App/Info.plist
 TopShelf/Info.plist
+App/ZooTV.entitlements

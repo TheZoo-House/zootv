@@ -3,6 +3,16 @@ import XCTest
 
 final class GuideTests: XCTestCase {
     let base = URL(string: "https://example.test")!
+    func testFavoritesPartitionPreservesPlaylistOrder() {
+        let channels = ["a", "b", "c", "d"].map { Channel(id: $0, number: $0, name: $0, streamURL: base) }
+        let guide = Guide(channels: channels, programmes: [])
+        for (favorites, expected) in [(Set<String>(), ["a", "b", "c", "d"]),
+                                      (["b", "d"], ["b", "d", "a", "c"]),
+                                      (["a", "b", "c", "d"], ["a", "b", "c", "d"]),
+                                      (["missing", "c"], ["c", "a", "b", "d"])] {
+            XCTAssertEqual(guide.orderedChannels(favorites: favorites).map(\.id), expected)
+        }
+    }
     func testPlaylistAttributesQuotedCommaAndOrdering() throws {
         let text = """
         #EXTM3U

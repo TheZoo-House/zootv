@@ -35,6 +35,9 @@ public struct Guide: Sendable {
     public init(channels: [Channel], programmes: [Programme]) {
         self.channels = channels; self.programmes = programmes
     }
+    public func orderedChannels(favorites: Set<String>) -> [Channel] {
+        channels.filter { favorites.contains($0.id) } + channels.filter { !favorites.contains($0.id) }
+    }
     public func schedule(for channel: Channel) -> [Programme] {
         programmes.filter { $0.channelID == channel.id }.sorted { $0.start < $1.start }
     }
