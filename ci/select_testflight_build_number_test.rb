@@ -6,7 +6,7 @@ require "tempfile"
 require_relative "select_testflight_build_number"
 
 class TestFlightBuildNumberSelectorTest < Minitest::Test
-  def test_selects_one_when_app_store_connect_has_no_builds_for_version
+  def test_selects_one_when_app_store_connect_has_no_builds
     assert_equal(
       "1",
       TestFlightBuildNumberSelector.select_build_number(
@@ -33,6 +33,31 @@ class TestFlightBuildNumberSelectorTest < Minitest::Test
     )
   end
 
+  def test_new_marketing_version_uses_all_paginated_tv_builds
+    selector = TestFlightBuildNumberSelector.new(env: {
+      "BUNDLE_ID" => "house.example.app", "MARKETING_VERSION" => "0.2.1"
+    })
+    selector.define_singleton_method(:app_id_for_bundle_id) { |_| "app" }
+    selector.define_singleton_method(:approved_app_store_versions) { |bundle_id:| [] }
+    selector.define_singleton_method(:fetch_json) do |url|
+      params = URI.decode_www_form(url.query).to_h
+      builds = [["1", "0.1.0", "TV_OS"], ["7", "0.2.0", "TV_OS"], ["99", "0.2.0", "IOS"]]
+      builds.select! do |_, version, platform|
+        (!params["filter[preReleaseVersion.version]"] || params["filter[preReleaseVersion.version]"] == version) &&
+          (!params["filter[preReleaseVersion.platform]"] || params["filter[preReleaseVersion.platform]"] == platform)
+      end
+      page = params.fetch("cursor", "0").to_i
+      next_url = url.dup
+      next_url.query = URI.encode_www_form(params.merge("cursor" => (page + 1).to_s))
+      {
+        "data" => builds[page, 1].to_a.map { |number, _, _| { "attributes" => { "version" => number } } },
+        "links" => { "next" => page + 1 < builds.length ? next_url.to_s : nil }
+      }
+    end
+
+    assert_equal("8", selector.run, "A new train must not reuse numbers from any earlier tvOS train")
+  end
+
   def test_rejects_non_numeric_build_numbers_from_apple
     selector = TestFlightBuildNumberSelector.new(env: {})
     selector.define_singleton_method(:app_id_for_bundle_id) { |_| "app" }
@@ -40,7 +65,7 @@ class TestFlightBuildNumberSelectorTest < Minitest::Test
       [{ "attributes" => { "version" => "beta" } }]
     end
     error = assert_raises(TestFlightBuildNumberSelector::SelectionError) do
-      selector.send(:latest_uploaded_build_number, bundle_id: "house.example.app", marketing_version: "1.0.0")
+      selector.send(:latest_uploaded_build_number, bundle_id: "house.example.app")
     end
     assert_includes(error.message, "non-numeric")
   end

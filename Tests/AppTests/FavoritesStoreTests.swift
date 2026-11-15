@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import ZooTV
 
 @MainActor private final class Cloud: FavoritesCloudStorage {
@@ -67,6 +68,43 @@ final class FavoritesStoreTests: XCTestCase {
         XCTAssertTrue(cloud.writes.isEmpty)
     }
 
+    @MainActor func testRelaunchWithUnavailableIdentityPreservesLocalFavoritesUntilTheAccountReturns() {
+        let (defaults, cloud, center) = fixture()
+        var identity: NSObject? = "account-a" as NSString
+        var store: FavoritesStore? = FavoritesStore(defaults: defaults, cloud: cloud, notifications: center, identity: { identity })
+        store!.toggle("saved")
+        cloud.available = false
+        store!.toggle("pending")
+        store = nil
+
+        let (otherDefaults, otherCloud, otherCenter) = fixture()
+        let other = FavoritesStore(defaults: otherDefaults, cloud: otherCloud, notifications: otherCenter, identity: { "account-b" as NSString })
+        other.toggle("stale")
+        cloud.dictionaryRepresentation = otherCloud.dictionaryRepresentation
+        cloud.writes = [:]
+        identity = nil
+        for _ in 0..<2 {
+            store = FavoritesStore(defaults: defaults, cloud: cloud, notifications: center, identity: { identity })
+            center.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            center.post(name: .NSUbiquityIdentityDidChange, object: nil)
+            notify(cloud, center, reason: NSUbiquitousKeyValueStoreServerChange)
+            XCTAssertTrue(store!.isFavorite("saved"), "An unavailable identity must not erase the active profile's saved favorites")
+            XCTAssertTrue(store!.isFavorite("pending"), "Pending local edits must survive until identity is available")
+            XCTAssertFalse(store!.isFavorite("stale"), "Do not import cloud data while its identity is unavailable")
+            XCTAssertTrue(cloud.writes.isEmpty, "Do not upload local edits without the current account identity")
+            store = nil
+        }
+
+        store = FavoritesStore(defaults: defaults, cloud: cloud, notifications: center, identity: { identity })
+        identity = "account-a" as NSString
+        cloud.dictionaryRepresentation = [:]
+        cloud.available = true
+        center.post(name: .NSUbiquityIdentityDidChange, object: nil)
+        XCTAssertTrue(store!.isFavorite("saved"))
+        XCTAssertTrue(store!.isFavorite("pending"))
+        XCTAssertEqual(cloud.writes.count, 1, "Resume the pending edit when the same account returns")
+    }
+
     @MainActor func testOfflineRemovalRemainsATombstoneAfterReconnect() throws {
         let (defaults, cloud, center) = fixture()
         let store = FavoritesStore(defaults: defaults, cloud: cloud, notifications: center, identity: { "account-a" as NSString })
@@ -90,6 +128,11 @@ final class FavoritesStoreTests: XCTestCase {
         cloud.available = false
         store!.toggle("a")
         let oldCloud = cloud.dictionaryRepresentation
+        identity = nil
+        cloud.writes = [:]
+        center.post(name: .NSUbiquityIdentityDidChange, object: nil)
+        XCTAssertTrue(store!.isFavorite("a"))
+        XCTAssertTrue(cloud.writes.isEmpty)
         identity = "account-b" as NSString
         cloud.dictionaryRepresentation = [:]
         cloud.writes = [:]
