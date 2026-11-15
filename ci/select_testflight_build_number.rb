@@ -77,12 +77,12 @@ class TestFlightBuildNumberSelector < AppStoreConnectClient
 
     enforce_open_train!(bundle_id: bundle_id, marketing_version: marketing_version)
 
-    latest = latest_uploaded_build_number(bundle_id: bundle_id, marketing_version: marketing_version)
+    latest = latest_uploaded_build_number(bundle_id: bundle_id)
     selected = self.class.select_build_number(
       latest_build_number: latest
     )
 
-    warn "Latest App Store Connect build for #{bundle_id} #{marketing_version}: #{latest || "none"}"
+    warn "Latest App Store Connect tvOS build for #{bundle_id}: #{latest || "none"}"
     warn "Selected next build number: #{selected}"
 
     selected
@@ -120,12 +120,12 @@ class TestFlightBuildNumberSelector < AppStoreConnectClient
       .compact
   end
 
-  def latest_uploaded_build_number(bundle_id:, marketing_version:)
+  def latest_uploaded_build_number(bundle_id:)
     app_id = app_id_for_bundle_id(bundle_id)
     builds = fetch_paginated_json(
       "/v1/builds",
       "filter[app]" => app_id,
-      "filter[preReleaseVersion.version]" => marketing_version,
+      "filter[preReleaseVersion.platform]" => "TV_OS",
       "fields[builds]" => "version,uploadedDate",
       "limit" => "200"
     )
