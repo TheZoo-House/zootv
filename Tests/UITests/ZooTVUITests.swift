@@ -1,9 +1,13 @@
 import XCTest
 
 final class ZooTVUITests: XCTestCase {
-    @MainActor private func select(_ element: XCUIElement, in app: XCUIApplication) {
+    @MainActor private func select(_ element: XCUIElement, in app: XCUIApplication, duration: TimeInterval = 0) {
         for _ in 0..<25 {
-            if element.hasFocus { XCUIRemote.shared.press(.select); return }
+            if element.hasFocus {
+                if duration > 0 { XCUIRemote.shared.press(.select, forDuration: duration) }
+                else { XCUIRemote.shared.press(.select) }
+                return
+            }
             let focused = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
             guard focused.exists else { XCUIRemote.shared.press(.down); continue }
             print("FOCUS", focused.identifier, focused.label, focused.frame, "TARGET", element.identifier, element.frame)
@@ -15,6 +19,51 @@ final class ZooTVUITests: XCTestCase {
             }
         }
         XCTFail("Could not focus \(element.identifier)")
+    }
+    @MainActor func testFavoritesMenuOrderingAndPersistence() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        defer { app.terminate() } // Also releases playback if a failed interaction accidentally tunes a channel.
+        let channel = app.buttons["channel-102"]
+        let previous = app.buttons["channel-101"]
+        XCTAssertTrue(channel.waitForExistence(timeout: 30), "Live channel list must load")
+        let wasFavorite = channel.label.contains("Favorite")
+        func toggle() {
+            let title = channel.label.contains("Favorite") ? "Remove from Favorites" : "Add to Favorites"
+            select(channel, in: app, duration: 1)
+            let action = app.cells.containing(.other, identifier: title).firstMatch
+            XCTAssertTrue(action.waitForExistence(timeout: 5), "Long press must offer a favorites action")
+            capture("Favorites menu")
+            select(action, in: app)
+            XCTAssertTrue(action.waitForNonExistence(timeout: 5), "The context menu must dismiss")
+        }
+        func capture(_ name: String) {
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = name; shot.lifetime = .keepAlways; add(shot)
+        }
+        capture("Favorites before")
+        if wasFavorite { toggle() }
+        toggle()
+        XCTAssertTrue(channel.label.contains("Favorite"), "Favorite must be accessible")
+        capture("Favorites after")
+        expectation(for: NSPredicate(format: "hasFocus == true"), evaluatedWith: channel)
+        waitForExpectations(timeout: 5)
+        XCTAssertLessThan(channel.frame.minY, previous.frame.minY, "Favorite must be above ordinary channels")
+        app.terminate(); app.launch()
+        XCTAssertTrue(channel.waitForExistence(timeout: 30))
+        XCTAssertTrue(channel.label.contains("Favorite"), "Favorite must survive relaunch")
+        select(channel, in: app)
+        let video = app.otherElements["liveVideo"]
+        expectation(for: NSPredicate(format: "value == 'playing-102'"), evaluatedWith: video)
+        waitForExpectations(timeout: 35)
+        if app.buttons["showControls"].exists { XCUIRemote.shared.press(.select) }
+        select(app.buttons["nextChannel"], in: app)
+        expectation(for: NSPredicate(format: "value == 'playing-100'"), evaluatedWith: video)
+        waitForExpectations(timeout: 35)
+        stopPlayback(app)
+        if !wasFavorite { toggle() }
+        XCTAssertEqual(channel.label.contains("Favorite"), wasFavorite, "Restore the starting favorites")
     }
     @MainActor func testLiveGuideAndPlaybackNavigation() throws {
         continueAfterFailure = false

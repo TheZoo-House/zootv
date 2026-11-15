@@ -8,7 +8,7 @@ settings:
     SWIFT_VERSION: "6.0"
     DEVELOPMENT_TEAM: $(ZOOTV_DEVELOPMENT_TEAM)
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.2.0"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 configFiles:
@@ -19,6 +19,11 @@ targets:
     type: application
     platform: tvOS
     sources: [App, Core]
+    entitlements:
+      path: App/ZooTV.entitlements
+      properties:
+        com.apple.developer.user-management: [runs-as-current-user-with-user-independent-keychain]
+        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)house.thezoo.ZooTV
     dependencies:
       - target: ZooTVTopShelf
     info:
