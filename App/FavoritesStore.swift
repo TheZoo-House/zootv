@@ -21,6 +21,7 @@ extension NSUbiquitousKeyValueStore: FavoritesCloudStorage {}
     @ObservationIgnored private let notifications: NotificationCenter
     @ObservationIgnored private let identity: () -> NSObject?
     @ObservationIgnored private var account: NSObject?
+    @ObservationIgnored private var identityAvailable = false
     @ObservationIgnored private var identityKnown: Bool
     @ObservationIgnored private var awaitingAccount: Bool
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -47,7 +48,7 @@ extension NSUbiquitousKeyValueStore: FavoritesCloudStorage {}
             store.cloudChanged(reason: reason, keys: keys)
         }
         observe(.NSUbiquityIdentityDidChange) { store, _, _ in
-            store.checkIdentity()
+            store.refresh()
         }
         observe(UIApplication.didBecomeActiveNotification) { store, _, _ in store.refresh() }
         for name in [UIApplication.willResignActiveNotification, UIApplication.willTerminateNotification] {
@@ -75,7 +76,7 @@ extension NSUbiquitousKeyValueStore: FavoritesCloudStorage {}
     func refresh() {
         checkIdentity()
         _ = cloud.synchronize()
-        guard !awaitingAccount, account != nil else { return }
+        guard !awaitingAccount, identityAvailable else { return }
         merge()
         flush()
     }
@@ -97,8 +98,10 @@ extension NSUbiquitousKeyValueStore: FavoritesCloudStorage {}
 
     private func checkIdentity() {
         let current = identity()
-        let same = account?.isEqual(current) ?? (current == nil)
-        if identityKnown, !same {
+        identityAvailable = current != nil
+        // Unavailable iCloud is not proof of a different user; retain this tvOS user's local state.
+        guard let current else { return }
+        if identityKnown, let account, !account.isEqual(current) {
             values = [:]; pending = [:]; syncError = nil
             awaitingAccount = true // The cloud cache may still belong to the old account.
         }
@@ -123,7 +126,7 @@ extension NSUbiquitousKeyValueStore: FavoritesCloudStorage {}
             return
         default: return
         }
-        guard account != nil else { save(); return }
+        guard identityAvailable else { save(); return }
         merge(keys: reason == NSUbiquitousKeyValueStoreServerChange ? keys : nil)
         flush()
     }
@@ -138,7 +141,7 @@ extension NSUbiquitousKeyValueStore: FavoritesCloudStorage {}
     }
 
     private func flush() {
-        guard !awaitingAccount, account != nil else { return }
+        guard !awaitingAccount, identityAvailable else { return }
         var proposed = cloud.dictionaryRepresentation
         var handedOff: [String] = []
         for (key, value) in pending {
